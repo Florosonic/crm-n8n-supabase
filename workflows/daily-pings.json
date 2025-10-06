@@ -1,0 +1,325 @@
+{
+  "name": "CRM OUTPUT",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 9 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "a7aac0c8-fc3d-4a76-b578-ee32e783ff93",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1328,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const today = new Date();\nconst dayOfWeek = today.getDay();\nconst isFriday = dayOfWeek === 5;\n\nreturn [{\n  json: {\n    isFriday: isFriday,\n    dayOfWeek: dayOfWeek,\n    date: today.toISOString().split('T')[0]\n  }\n}];"
+      },
+      "id": "78bbe0ae-e4b7-4832-8595-0b1a8295f225",
+      "name": "Check if Friday",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1152,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "848acbb7-5dea-45ce-8554-dba53df6789d",
+      "name": "Store Friday Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -960,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n    p.*,\n    d.updated_at as notes_updated_at,\n    c.phone as contact_phone\nFROM get_today_pings() p\nLEFT JOIN pings ping ON ping.id = p.ping_id\nLEFT JOIN deals d ON d.id = ping.deal_id\nLEFT JOIN contacts c ON c.email = p.contact_email",
+        "options": {}
+      },
+      "id": "5b83662a-83c1-4f77-86e8-d8d81eb66579",
+      "name": "Get Today Pings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -768,
+        80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "JnDPpQ68oUq3yEkE",
+          "name": "CRM"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "0deb05aa-dec7-4f55-a8a2-88df43cce848",
+      "name": "Loop Over Pings",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -576,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ping = $input.first().json;\n\nlet subject = ping.product_name;\n\nlet html = `\n<html>\n<head>\n  <style>\n    body { font-family: Arial, sans-serif; color: #333; line-height: 1.6; }\n    h2 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }\n    .ping-card {\n      background: #f8f9fa;\n      border-left: 4px solid #3498db;\n      padding: 15px;\n      margin: 15px 0;\n      border-radius: 5px;\n    }\n    .company { font-weight: bold; color: #2c3e50; font-size: 18px; }\n    .stage { \n      display: inline-block;\n      padding: 3px 8px;\n      border-radius: 3px;\n      font-size: 12px;\n      font-weight: bold;\n      margin-left: 10px;\n    }\n    .stage-1, .stage-2 { background: #e8f5e9; color: #2e7d32; }\n    .stage-3, .stage-4 { background: #fff3e0; color: #ef6c00; }\n    .stage-5, .stage-6 { background: #fce4ec; color: #c2185b; }\n    .stage-7 { background: #e3f2fd; color: #1565c0; }\n    .contact { color: #555; margin: 10px 0; }\n    .action { \n      background: #fffde7;\n      padding: 10px;\n      border-radius: 3px;\n      margin: 10px 0;\n      font-weight: bold;\n      color: #f57c00;\n    }\n    .notes { \n      background: white;\n      padding: 10px;\n      border-radius: 3px;\n      margin: 10px 0;\n      border: 1px solid #ddd;\n    }\n    .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #777; font-size: 12px; }\n  </style>\n</head>\n<body>\n  <h2>🔔 Напоминание</h2>\n  <div class=\"ping-card\">\n    <div class=\"company\">\n      ${ping.company_name}\n      <span class=\"stage stage-${ping.stage}\">Этап ${ping.stage}: ${ping.stage_name}</span>\n    </div>\n    <div class=\"product\">📦 ${ping.product_name}</div>\n    <div class=\"contact\">\n      👤 ${ping.contact_name || 'Контакт не указан'}\n      ${ping.contact_email ? `| 📧 <a href=\"mailto:${ping.contact_email}\">${ping.contact_email}</a>` : ''}\n      ${ping.contact_phone ? `| 📞 ${ping.contact_phone}` : ''}\n    </div>\n    <div class=\"action\">⚡ ${ping.action}</div>\n    ${ping.last_notes ? `<div class=\"notes\">📝 <strong>Последние заметки${ping.notes_updated_at ? ` (${new Date(ping.notes_updated_at).toLocaleDateString('ru-RU')})` : ''}:</strong> ${ping.last_notes}</div>` : ''}\n  </div>\n  <div class=\"footer\">\n    <p>Это автоматическое уведомление из CRM системы.</p>\n    <p>Сгенерировано: ${new Date().toLocaleString('ru-RU')}</p>\n  </div>\n</body>\n</html>\n`;\n\nreturn [{\n  json: {\n    subject: subject,\n    html: html\n  }\n}];"
+      },
+      "id": "cfa340bb-1e75-49ce-b3c8-dcef7179481a",
+      "name": "Format Single Ping",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -368,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "evgeniy.bolotian@symmetron.ru",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "f240fdfc-69d5-4f08-8412-36b09ed71415",
+      "name": "Send Ping Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -224,
+        80
+      ],
+      "webhookId": "b2a827d4-71d0-4eb6-b45c-5d8f3ef0cc2d",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "LzfcUmqtW5UjGJZf",
+          "name": "LED Search Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM get_weekly_summary()",
+        "options": {}
+      },
+      "id": "bc198348-e581-45a0-a17d-b0a40c7e9496",
+      "name": "Get Weekly Summary",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -240,
+        272
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "JnDPpQ68oUq3yEkE",
+          "name": "CRM"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const weeklySummary = $input.first().json.get_weekly_summary;\n\nlet subject = `📊 Недельная сводка - ${new Date().toLocaleDateString('ru-RU')}`;\n\nlet html = `\n<html>\n<head>\n  <style>\n    body { font-family: Arial, sans-serif; color: #333; line-height: 1.6; }\n    h2 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }\n    .summary-card {\n      background: #f8f9fa;\n      border-left: 4px solid #3498db;\n      padding: 15px;\n      margin: 15px 0;\n      border-radius: 5px;\n    }\n    .stat-row {\n      color: #555;\n      margin: 8px 0;\n      padding: 8px;\n      background: white;\n      border-radius: 3px;\n    }\n    .stat-label { font-weight: bold; color: #2c3e50; }\n    .stat-value { color: #3498db; font-weight: bold; }\n    .warning { \n      background: #fff3cd;\n      color: #856404;\n      padding: 12px;\n      border-radius: 3px;\n      margin: 10px 0;\n      border-left: 4px solid #f57c00;\n    }\n    .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #777; font-size: 12px; }\n  </style>\n</head>\n<body>\n  <h2>📊 Недельная сводка</h2>\n  <div class=\"summary-card\">\n`;\n\nif (weeklySummary && weeklySummary.pipeline_stats) {\n  const totalDeals = weeklySummary.pipeline_stats.reduce((sum, s) => sum + s.deal_count, 0);\n  const totalValue = weeklySummary.pipeline_stats.reduce((sum, s) => sum + s.total_value, 0);\n  \n  html += `\n    <div class=\"stat-row\">\n      <span class=\"stat-label\">Всего сделок:</span> \n      <span class=\"stat-value\">${totalDeals}</span>\n    </div>\n    <div class=\"stat-row\">\n      <span class=\"stat-label\">Общая сумма:</span> \n      <span class=\"stat-value\">${totalValue.toFixed(2)}</span>\n    </div>\n  `;\n  \n  weeklySummary.pipeline_stats.forEach(stat => {\n    if (stat.deal_count > 0) {\n      html += `\n    <div class=\"stat-row\">\n      <span class=\"stat-label\">${stat.stage_name}:</span> \n      <span class=\"stat-value\">${stat.deal_count}</span>\n    </div>`;\n    }\n  });\n}\n\nhtml += `</div>`;\n\nif (weeklySummary && weeklySummary.stuck_deals && weeklySummary.stuck_deals.length > 0) {\n  html += `\n  <div class=\"warning\">\n    ⚠️ <strong>Застрявшие сделки:</strong> найдено ${weeklySummary.stuck_deals.length} сделок без движения более 2 недель\n  </div>`;\n}\n\nif (weeklySummary && weeklySummary.overdue_pings && weeklySummary.overdue_pings.length > 0) {\n  html += `\n  <div class=\"warning\">\n    🔴 <strong>Просроченные пинги:</strong> найдено ${weeklySummary.overdue_pings.length} просроченных напоминаний\n  </div>`;\n}\n\nhtml += `\n  <div class=\"footer\">\n    <p>Это автоматическое уведомление из CRM системы.</p>\n    <p>Сгенерировано: ${new Date().toLocaleString('ru-RU')}</p>\n  </div>\n</body>\n</html>\n`;\n\nreturn [{\n  json: {\n    subject: subject,\n    html: html\n  }\n}];"
+      },
+      "id": "efe87844-0316-4f01-a914-6ac63f753e29",
+      "name": "Format Weekly Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "evgeniy.bolotian@symmetron.ru",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "10bb27a7-95c4-462d-af2a-ff08a113fd9d",
+      "name": "Send Weekly Summary",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        64,
+        272
+      ],
+      "webhookId": "6f9104b7-cad3-4257-adbe-efd8c931b731",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "LzfcUmqtW5UjGJZf",
+          "name": "LED Search Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const dayOfWeek = new Date().getDay();\n\nif (dayOfWeek === 5) {\n  return $input.all();\n} else {\n  return [];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        272
+      ],
+      "id": "0028f304-2ace-40cd-9514-e08bd51d2fc1",
+      "name": "Code"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check if Friday",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Friday": {
+      "main": [
+        [
+          {
+            "node": "Store Friday Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Friday Data": {
+      "main": [
+        [
+          {
+            "node": "Get Today Pings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Today Pings": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Pings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Pings": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Single Ping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Single Ping": {
+      "main": [
+        [
+          {
+            "node": "Send Ping Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Ping Email": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Pings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Weekly Summary": {
+      "main": [
+        [
+          {
+            "node": "Format Weekly Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Weekly Summary": {
+      "main": [
+        [
+          {
+            "node": "Send Weekly Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Get Weekly Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "6e3e6e39-74a7-4533-9336-61f64e6c6d21",
+  "meta": {
+    "instanceId": "f393ef9df4111c047f6a8b275e44a69a74e0c35d9f0e460ae708ae127459bea9"
+  },
+  "id": "lQsbPcOoZHDBSd0f",
+  "tags": []
+}

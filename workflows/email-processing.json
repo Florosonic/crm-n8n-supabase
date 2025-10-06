@@ -1,0 +1,491 @@
+{
+  "name": "CRM INPUT",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "labelIds": [
+            "UNREAD"
+          ],
+          "sender": "-requestled@gmail.com"
+        },
+        "options": {}
+      },
+      "id": "cb5236d7-59b2-43ea-842b-5471d0f47b3b",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -880,
+        64
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "LzfcUmqtW5UjGJZf",
+          "name": "LED Search Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const gmailData = $input.first().json;\n\nlet cleanSubject = gmailData.subject || '';\ncleanSubject = cleanSubject.replace(/^(FW:|RE:|Fwd:|Fw:|Re:)\\s*/gi, '').trim();\n\nlet emailText = (gmailData.text || gmailData.snippet || '').toLowerCase();\n\n// Существующая логика won/lost\nlet isCloseCommand = false;\nlet closeCommand = null;\nlet closeReason = '';\n\nif (emailText.match(/^\\s*won\\s*:?\\s*/i) || emailText.includes('\\nwon') || emailText.startsWith('won')) {\n  isCloseCommand = true;\n  closeCommand = 'won';\n  const wonMatch = emailText.match(/won[:\\s]+(.+?)(?:\\n|$)/i);\n  closeReason = wonMatch ? wonMatch[1].trim() : 'Сделка выиграна';\n} else if (emailText.match(/^\\s*lost\\s*:?\\s*/i) || emailText.includes('\\nlost') || emailText.startsWith('lost')) {\n  isCloseCommand = true;\n  closeCommand = 'lost';\n  const lostMatch = emailText.match(/lost[:\\s]+(.+?)(?:\\n|$)/i);\n  closeReason = lostMatch ? lostMatch[1].trim() : 'Сделка проиграна';\n}\n\n// Парсинг служебных данных из начала письма\nconst originalText = gmailData.text || gmailData.snippet || '';\nconst beforeSignature = originalText.split(/From:|С уважением/i)[0];\n\nlet directCompany = null;\nlet directPhone = null;\nlet directFirstName = null;\nlet directLastName = null;\nlet directStage = null;\nlet directPingDate = null;\nlet directDescription = null;\n\n// Компания - ловим любые символы между \"Компания\" и значением\nconst companyMatch = beforeSignature.match(/Компания[^а-яА-Яa-zA-Z0-9]*(.+?)(?:\\n|$)/i);\nif (companyMatch) {\n  directCompany = companyMatch[1].trim();\n}\n\n// Телефон\nconst phoneMatch = beforeSignature.match(/Телефон[^0-9+]*(.+?)(?:\\n|$)/i);\nif (phoneMatch) {\n  directPhone = phoneMatch[1].trim();\n}\n\n// ФИО\nconst fioMatch = beforeSignature.match(/ФИО[^а-яА-Яa-zA-Z]*(.+?)(?:\\n|$)/i);\nif (fioMatch) {\n  const fio = fioMatch[1].trim().split(/\\s+/);\n  directFirstName = fio[0] || null;\n  directLastName = fio[1] || null;\n}\n\n// Этап\nconst stageMatch = beforeSignature.match(/Этап[^0-9]*(\\d)/i);\nif (stageMatch) {\n  directStage = parseInt(stageMatch[1]);\n}\n\n// Пинг\nconst pingMatch = beforeSignature.match(/Пинг[^0-9]*(\\d{2})\\.(\\d{2})\\.(\\d{4})/i);\nif (pingMatch) {\n  directPingDate = `${pingMatch[3]}-${pingMatch[2]}-${pingMatch[1]}`;\n}\n\n// Описание\nconst descMatch = beforeSignature.match(/Описание[^а-яА-Яa-zA-Z]*(.+?)(?:\\n|$)/i);\nif (descMatch) {\n  directDescription = descMatch[1].trim();\n}\n\nreturn [{\n  json: {\n    text: gmailData.text || gmailData.snippet || '',\n    subject: cleanSubject,\n    originalSubject: gmailData.subject || '',\n    from: gmailData.from?.value?.[0]?.address || gmailData.from || '',\n    fromName: gmailData.from?.value?.[0]?.name || '',\n    id: gmailData.id,\n    threadId: gmailData.threadId,\n    date: gmailData.date,\n    isCloseCommand: isCloseCommand,\n    closeCommand: closeCommand,\n    closeReason: closeReason,\n    directCompany: directCompany,\n    directPhone: directPhone,\n    directFirstName: directFirstName,\n    directLastName: directLastName,\n    directStage: directStage,\n    directPingDate: directPingDate,\n    directDescription: directDescription\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -720,
+        64
+      ],
+      "id": "7eec816a-957c-432b-851e-9ab9141bebf4",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT d.id as deal_id, d.product_name, d.stage, d.status, c.name as company_name FROM deals d JOIN companies c ON c.id = d.company_id WHERE LOWER(d.product_name) = LOWER('{{ $json.subject }}') AND d.status = 'open' ORDER BY d.created_at DESC LIMIT 1",
+        "options": {}
+      },
+      "id": "9d917d1c-4912-4222-b671-068c93b73ef3",
+      "name": "Find Deal for Close",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -384,
+        -16
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "JnDPpQ68oUq3yEkE",
+          "name": "CRM"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const dealData = $('Find Deal for Close').first().json;\n\nif (!dealData || !dealData.deal_id) {\n  throw new Error('Открытая сделка с продуктом \"' + $('Code').item.json.subject + '\" не найдена');\n}\n\nreturn [{\n  json: dealData\n}];"
+      },
+      "id": "7033f483-64c2-4ada-b9fb-b13ad0da8b7a",
+      "name": "Check Deal Found",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM close_deal('{{ $json.deal_id }}'::UUID, '{{ $('Code').item.json.closeCommand }}', '{{ $('Code').item.json.closeReason }}')",
+        "options": {}
+      },
+      "id": "2e0c9e9a-45c8-4f0f-a0bc-05177a2e5183",
+      "name": "Close Deal in DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -32,
+        -16
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "JnDPpQ68oUq3yEkE",
+          "name": "CRM"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "reply",
+        "messageId": "={{ $('Code').item.json.id }}",
+        "message": "=<html>\n<body style=\"font-family: Arial, sans-serif; font-size: 12px; line-height: 1.4; color: #333;\">\n\n<div style=\"margin-bottom: 10px;\">\n  <div style=\"font-weight: bold; font-size: 12px; margin-bottom: 4px;\">✅ Статус сделки</div>\n  <div style=\"padding-left: 20px; font-size: 11px;\">\n    <div style=\"color: {{ $('Code').item.json.closeCommand === 'won' ? '#28a745' : '#dc3545' }}; font-weight: bold;\">\n      {{ $('Code').item.json.closeCommand === 'won' ? '🎉 ВЫИГРАНА' : '❌ ПРОИГРАНА' }}\n    </div>\n    <div><strong>Время закрытия:</strong> {{ $now.toFormat('dd.MM.yyyy HH:mm') }}</div>\n  </div>\n</div>\n\n<div style=\"margin-bottom: 10px;\">\n  <div style=\"font-weight: bold; font-size: 12px; margin-bottom: 4px;\">👤 Компания</div>\n  <div style=\"padding-left: 20px; font-size: 11px;\">\n    <div><strong>Название:</strong> {{ $('Find Deal for Close').item.json.company_name }}</div>\n  </div>\n</div>\n\n<div style=\"margin-bottom: 10px;\">\n  <div style=\"font-weight: bold; font-size: 12px; margin-bottom: 4px;\">📋 Сделка</div>\n  <div style=\"padding-left: 20px; font-size: 11px;\">\n    <div><strong>Продукт:</strong> {{ $('Find Deal for Close').item.json.product_name }}</div>\n    <div><strong>Этап:</strong> {{ $('Find Deal for Close').item.json.stage }}</div>\n  </div>\n</div>\n\n<div style=\"font-size: 10px; color: #999; margin-top: 12px; padding-top: 8px; border-top: 1px solid #eee;\">\n  Обработано автоматически системой CRM\n</div>\n\n</body>\n</html>",
+        "options": {
+          "replyToSenderOnly": true
+        }
+      },
+      "id": "e1faa5f6-93b5-4b4c-a18f-1babec11ac2f",
+      "name": "Send Close Success",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        144,
+        -16
+      ],
+      "webhookId": "ba9082d5-0cd9-46d8-af8c-8fb7e8e0f470",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "LzfcUmqtW5UjGJZf",
+          "name": "LED Search Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT d.id as deal_id, d.product_name, d.product_description, d.price, c.name as company_name, ct.email, ct.phone, ct.first_name, ct.last_name\nFROM deals d\nLEFT JOIN companies c ON c.id = d.company_id\nLEFT JOIN contacts ct ON ct.id = d.contact_id\nWHERE LOWER(d.product_name) = LOWER('{{ $json.subject }}')\nLIMIT 1\n",
+        "options": {}
+      },
+      "id": "444c168e-c05c-4794-bdc7-e3864092e046",
+      "name": "Check Existing Deal",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -384,
+        144
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "JnDPpQ68oUq3yEkE",
+          "name": "CRM"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Проанализируй текст письма и извлеки информацию о компании клиента, контактах, продукте и этапе сделки.\n=== ВХОДНЫЕ ДАННЫЕ ===\nТекст письма: {{ $('Code').item.json.text }}\nТекущая дата: {{ $now.format('yyyy-MM-dd') }}\n=== ГЛАВНОЕ ПРАВИЛО ===\nИзвлекай ТОЛЬКО информацию о КЛИЕНТЕ (с кем переписывается Евгений Болотян).\nИГНОРИРУЙ все данные о компании Симметрон/Symmetron и Евгении Болотяне.\nИГНОРИРУЙ телефоны +78124494707 (м. 6075); прямой: +78124260271\n=== ИСКЛЮЧЕНИЕ: СЛУЖЕБНЫЕ ПОМЕТКИ ===\nВ САМОМ НАЧАЛЕ письма (до первого \"From:\" или \"С уважением\") могут быть служебные пометки:\n\n\"Этап X\" - номер этапа\n\"Компания [название]\" - название компании клиента\n\"[телефон]\" - телефон клиента\n\nЭти пометки добавлены Болотяном О КЛИЕНТЕ - извлекай их.\nПример:\n+7 (993) 205-13-94\nЭтап 6\nКомпания Витрулюкс\nС уважением,\nБолотян Евгений...\n→ phone: \"+7 (993) 205-13-94\", stage: 6, company_name: \"Витрулюкс\"\n=== ЧТО ИЗВЛЕКАТЬ ===\nКомпания клиента:\n\nИщи в служебных пометках или в тексте переписки\nПримеры: \"Компания Промдиод\" → \"Промдиод\"\n\nКонтакт клиента:\nИмя и фамилия: ищи в подписях писем клиента\nEmail: адрес клиента из переписки (НЕ symmetron.ru)\nТелефоны:\n\nИз служебных пометок (до первого \"From:\" или \"С уважением\")\nИз подписей клиента (НЕ из подписи Болотяна)\nВсе телефоны через точку с запятой\nСохраняй добавочные: \"8(4722)52-17-20 доб.140\"\n\nПродукт: Название берется из Subject письма\n\nЭтап сделки (1-7):\n\nИз служебной пометки \"Этап X\"\nИли определи по содержанию переписки:\n\nStage №1 Выявление потребности, Примеры:\n\"Что используете? Можно ли получить какой-то запрос для проработки? Может есть какой-то запрос для проработки? Появились ли какие-то заявки? Какая ситуация с потребностями?\"\nStage №2 Обработка запроса/КП. Примеры:\n\"КП ниже. Счет во вложении. Ответ по Вашему запросу готов. Сообщите, пожалуйста, обратную связь\"\nStage №3 Поставка образцов. Примеры:\n\"Образцы отгрузим тогда-то (например завтра, или через неделю). Образцы отгрузили. Образцы ушли. Образцы готовы к выдаче. Планируем отгрузить образцы тогда-то.\"\nStage №4 Подтверждение получения. Примеры:\n\"Скажите, пожалуйста, дошли до Вас образцы? Дошли ли образцы? Получили образцы?\"\nStage №5 Результат тестирования. Примеры:\n\"Скажите, пожалуйста, когда могут быть проверены образцы? Когда сможете протестировать образцы? Образцы проверены, все устроило.\"\nStage №6 Получение заказа. Примеры:\n\"Образцы устроили, может ли быть какой-то заказ на данные позиции? Образцы подошли, какие планы по новым заказам?\"\nStage №7 Повторные заказы. Примеры:\n\"Проявились ли у Вас новые потребности? Может есть новые заявки? Есть ли новые запросы?\"\n\n\nДаты:\n\n**ФОРМАТ ДАТ: DD.MM.YYYY (день.месяц.год, европейский формат)**\nПримеры: \"07.11.2025\" = 7 ноября 2025, \"31.12.2024\" = 31 декабря 2024\nsample_shipment_date: дата отгрузки образцов в формате YYYY-MM-DD\nmanual_ping_date: дата следующего напоминания из текста вида \"Пинг на 31.10\" → \"2025-10-31\"\n\nNotes: Краткое саммари всей переписки (СТРОГО 2-3 предложения)\n\n=== ФОРМАТ ОТВЕТА ===\nВерни JSON БЕЗ markdown блоков (без ```json):\n{\n\"company_name\": \"название компании клиента или null\",\n\"email\": \"email клиента\",\n\"phone\": \"телефоны через ; или null\",\n\"first_name\": \"имя или null\",\n\"last_name\": \"фамилия или null\",\n\"stage\": число 1-7,\n\"sample_shipment_date\": \"YYYY-MM-DD или null\",\nmanual_ping_date: дата следующего напоминания из текста вида \"Пинг на 31.10\" → \"2025-10-31\"\nКРИТИЧЕСКИ ВАЖНО: Даты ВСЕГДА в формате ДЕНЬ.МЕСЯЦ (европейский)!\n\"07.11.2025\" означает 7 НОЯБРЯ (месяц 11), а НЕ 11 октября!\n\"notes\": \"саммари переписки\"\n}",
+        "options": {}
+      },
+      "id": "ad22ae50-a04a-4926-b7aa-6d0b483fafa7",
+      "name": "Parse Email with AI",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.6,
+      "position": [
+        -208,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "id": "6c1c79b7-eab8-4610-af8b-9bfa642e8268",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        -208,
+        320
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "kfJHIULROpUDP7Q0",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const aiOutput = $input.first().json.output;\nconst gmailData = $('Gmail Trigger').first().json;\nconst codeData = $('Code').first().json;\n\nlet existingDealData = null;\ntry {\n  existingDealData = $('Check Existing Deal').first().json;\n} catch (e) {}\n\nlet parsedData;\ntry {\n  parsedData = JSON.parse(aiOutput);\n} catch (e) {\n  const jsonMatch = aiOutput.match(/{[\\s\\S]*}/);\n  if (jsonMatch) {\n    parsedData = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('Не удалось извлечь JSON из ответа AI');\n  }\n}\n\nlet productName = gmailData.subject || gmailData.Subject || '';\nproductName = productName.replace(/^(FW:|RE:|Fwd:|Fw:|Re:)\\s*/gi, '').trim();\nif (!productName) {\n  productName = 'Продукт не указан';\n}\n\nif (existingDealData && existingDealData.deal_id) {\n  parsedData.company_name = parsedData.company_name || existingDealData.company_name;\n  parsedData.email = parsedData.email || existingDealData.email;\n  parsedData.phone = parsedData.phone || existingDealData.phone;\n  parsedData.first_name = parsedData.first_name || existingDealData.first_name;\n  parsedData.last_name = parsedData.last_name || existingDealData.last_name;\n  parsedData.product_name = existingDealData.product_name || productName;\n  parsedData.product_description = parsedData.product_description || existingDealData.product_description;\n  parsedData.price = parsedData.price || existingDealData.price;\n  parsedData.existing_deal = true;\n  parsedData.existing_deal_id = existingDealData.deal_id;\n} else {\n  parsedData.product_name = productName;\n  parsedData.existing_deal = false;\n}\n\n// НОВОЕ: Приоритет прямым данным из письма над AI\nif (codeData.directCompany) {\n  parsedData.company_name = codeData.directCompany;\n}\nif (codeData.directPhone) {\n  parsedData.phone = codeData.directPhone;\n}\nif (codeData.directFirstName) {\n  parsedData.first_name = codeData.directFirstName;\n}\nif (codeData.directLastName) {\n  parsedData.last_name = codeData.directLastName;\n}\nif (codeData.directStage) {\n  parsedData.stage = codeData.directStage;\n}\nif (codeData.directPingDate) {\n  parsedData.manual_ping_date = codeData.directPingDate;\n}\nif (codeData.directDescription) {\n  parsedData.notes = codeData.directDescription;\n}\n\nif (!parsedData.company_name || !parsedData.product_name || !parsedData.stage) {\n  throw new Error('Отсутствуют обязательные поля в ответе AI');\n}\n\nlet senderEmail = null;\nif (gmailData.from) {\n  if (typeof gmailData.from === 'string') {\n    const emailMatch = gmailData.from.match(/<(.+?)>/) || gmailData.from.match(/([^\\s]+@[^\\s]+)/);\n    senderEmail = emailMatch ? emailMatch[1] : gmailData.from;\n  } else if (gmailData.from.value && Array.isArray(gmailData.from.value)) {\n    senderEmail = gmailData.from.value[0]?.address;\n  } else if (gmailData.from.address) {\n    senderEmail = gmailData.from.address;\n  }\n}\n\nif (!senderEmail && gmailData.sender) {\n  senderEmail = gmailData.sender;\n}\n\nlet subject = gmailData.subject || gmailData.Subject || '';\n\nreturn [{\n  json: {\n    output: {\n      company_name: parsedData.company_name,\n      contact_email: parsedData.email,\n      contact_phone: parsedData.phone,\n      contact_first_name: parsedData.first_name,\n      contact_last_name: parsedData.last_name,\n      email: parsedData.email,\n      phone: parsedData.phone,\n      first_name: parsedData.first_name,\n      last_name: parsedData.last_name,\n      product_name: parsedData.product_name,\n      product_description: parsedData.product_description,\n      price: parsedData.price,\n      stage: parsedData.stage,\n      sample_shipment_date: parsedData.sample_shipment_date,\n      manual_ping_date: parsedData.manual_ping_date,\n      notes: parsedData.notes,\n      confidence: parsedData.confidence,\n      existing_deal: parsedData.existing_deal,\n      existing_deal_id: parsedData.existing_deal_id\n    },\n    emailId: gmailData.id || gmailData.messageId,\n    threadId: gmailData.threadId || gmailData.conversationId,\n    senderEmail: senderEmail || 'Evgeniy.Bolotian@symmetron.ru',\n    subject: subject,\n    gmailDebug: {\n      hasFrom: !!gmailData.from,\n      fromType: typeof gmailData.from,\n      fromValue: gmailData.from\n    }\n  }\n}];"
+      },
+      "id": "71e70f94-08ec-4314-9828-d759805f2deb",
+      "name": "Parse JSON from AI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        96,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM process_email($1::jsonb)",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json.output) }}"
+        }
+      },
+      "id": "a9a5a2b2-153a-479d-bace-4d0f30ba33e5",
+      "name": "Process Email in Supabase",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        256,
+        144
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "JnDPpQ68oUq3yEkE",
+          "name": "CRM"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n    c.name as company_name, \n    d.product_name, \n    d.stage,\n    ps.name as stage_name,\n    ct.first_name,\n    ct.last_name,\n    ct.email,\n    ct.phone,\n    d.notes,\n    (SELECT ping_date FROM pings WHERE deal_id = d.id AND is_completed = FALSE ORDER BY ping_date ASC LIMIT 1) as next_ping_date\nFROM companies c \nJOIN deals d ON d.company_id = c.id \nLEFT JOIN contacts ct ON ct.id = d.contact_id\nLEFT JOIN pipeline_stages ps ON ps.id = d.stage\nWHERE c.id = '{{ $json.process_email.company_id }}' \nAND d.id = '{{ $json.process_email.deal_id }}'",
+        "options": {}
+      },
+      "id": "b12ac772-fa47-4b06-b199-71471afeb183",
+      "name": "Get Names from DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        416,
+        144
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "JnDPpQ68oUq3yEkE",
+          "name": "CRM"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "reply",
+        "messageId": "={{ $('Parse JSON from AI').item.json.emailId }}",
+        "message": "=<html>\n<body style=\"font-family: Arial, sans-serif; font-size: 12px; line-height: 1.4; color: #333;\">\n\n<div style=\"margin-bottom: 10px;\">\n  <div style=\"font-weight: bold; font-size: 12px; margin-bottom: 4px;\">👤 Компания и контакт</div>\n  <div style=\"padding-left: 20px; font-size: 11px;\">\n    <div><strong>Компания:</strong> {{ $('Get Names from DB').item.json.company_name || 'Не указано' }}</div>\n    <div><strong>Имя:</strong> {{ $('Get Names from DB').item.json.first_name || 'Не указано' }} {{ $('Get Names from DB').item.json.last_name || '' }}</div>\n    <div><strong>Email:</strong> {{ $('Get Names from DB').item.json.email || 'Не указано' }}</div>\n    <div><strong>Телефон:</strong> {{ $('Get Names from DB').item.json.phone || 'Не указано' }}</div>\n  </div>\n</div>\n\n<div style=\"margin-bottom: 10px;\">\n  <div style=\"font-weight: bold; font-size: 12px; margin-bottom: 4px;\">📦 Продукт</div>\n  <div style=\"padding-left: 20px; font-size: 11px;\">\n    <div><strong>Название:</strong> {{ $('Get Names from DB').item.json.product_name || 'Не указано' }}</div>\n    <div><strong>Описание продукта:</strong> {{ $('Parse JSON from AI').item.json.output.product_description || 'Не указано' }}</div>\n    <div><strong>Этап:</strong> {{ $('Get Names from DB').item.json.stage || $('Parse JSON from AI').item.json.output.stage }} ({{ $('Get Names from DB').item.json.stage_name }})</div>\n    {{ $('Parse JSON from AI').item.json.output.existing_deal ? '<div style=\"color: #0066cc;\"><strong>Статус:</strong> Существующая сделка обновлена</div>' : '<div style=\"color: #28a745;\"><strong>Статус:</strong> Создана новая сделка</div>' }}\n  </div>\n</div>\n\n<div style=\"margin-bottom: 10px;\">\n  <div style=\"font-weight: bold; font-size: 12px;\"><span>📝 Описание:</span> <span style=\"font-weight: normal;\">{{ $('Get Names from DB').item.json.notes || 'Не указано' }}</span></div>\n</div>\n\n<div style=\"margin-bottom: 10px;\">\n  <div style=\"font-weight: bold; font-size: 12px; margin-bottom: 4px;\">📅 Даты</div>\n  <div style=\"padding-left: 20px; font-size: 11px;\">\n    <div><strong>Отгрузка образцов:</strong> {{ $('Parse JSON from AI').item.json.output.sample_shipment_date || 'Не указано' }}</div>\n    <div><strong>Напоминание:</strong> {{ ($('Get Names from DB').item.json.next_ping_date || $('Process Email in Supabase').item.json.process_email.next_ping_date) ? new Date($('Get Names from DB').item.json.next_ping_date || $('Process Email in Supabase').item.json.process_email.next_ping_date).toDateString() : 'Не указано' }}</div>\n  </div>\n</div>\n\n<div style=\"font-size: 10px; color: #999; margin-top: 12px; padding-top: 8px; border-top: 1px solid #eee;\">\n  Обработано автоматически системой CRM\n</div>\n\n</body>\n</html>",
+        "options": {
+          "replyToSenderOnly": true
+        }
+      },
+      "id": "70932189-313a-4c46-b33c-1e20aa25c826",
+      "name": "Send Warning Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        592,
+        144
+      ],
+      "webhookId": "1a545f11-e0c8-46d8-b8a9-aa129781d92e",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "LzfcUmqtW5UjGJZf",
+          "name": "LED Search Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "eeae523a-e180-41ea-8b53-d1ef63fa236c",
+              "leftValue": "={{ $json.isCloseCommand.toString() }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -560,
+        64
+      ],
+      "id": "0f9c1c07-11f8-408f-8a3a-e87ca8b636d7",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "operation": "markAsRead",
+        "messageId": "={{ $json.id }}"
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        800,
+        144
+      ],
+      "id": "ab264250-adb1-4140-ad2f-c6595baae2c9",
+      "name": "Mark a message as read1",
+      "webhookId": "42cbcc68-0770-4313-ad00-7fac164b3043",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "LzfcUmqtW5UjGJZf",
+          "name": "LED Search Bot"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Deal for Close": {
+      "main": [
+        [
+          {
+            "node": "Check Deal Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Deal Found": {
+      "main": [
+        [
+          {
+            "node": "Close Deal in DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close Deal in DB": {
+      "main": [
+        [
+          {
+            "node": "Send Close Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Existing Deal": {
+      "main": [
+        [
+          {
+            "node": "Parse Email with AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Email with AI": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON from AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Parse Email with AI",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JSON from AI": {
+      "main": [
+        [
+          {
+            "node": "Process Email in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Email in Supabase": {
+      "main": [
+        [
+          {
+            "node": "Get Names from DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Names from DB": {
+      "main": [
+        [
+          {
+            "node": "Send Warning Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Find Deal for Close",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Existing Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Warning Email": {
+      "main": [
+        [
+          {
+            "node": "Mark a message as read1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "cf3a7513-8af0-4af0-a9c8-c5c9df4f0a76",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "f393ef9df4111c047f6a8b275e44a69a74e0c35d9f0e460ae708ae127459bea9"
+  },
+  "id": "0VDpy7jx0ZEC29yD",
+  "tags": []
+}
